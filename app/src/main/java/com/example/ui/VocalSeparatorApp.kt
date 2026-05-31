@@ -60,6 +60,11 @@ fun VocalSeparatorApp(
     val selectedFileUri by viewModel.selectedFileUri.collectAsStateWithLifecycle()
     val separationIntensity by viewModel.separationIntensity.collectAsStateWithLifecycle()
 
+    val outputFormat by viewModel.outputFormat.collectAsStateWithLifecycle()
+    val customOutputName by viewModel.customOutputName.collectAsStateWithLifecycle()
+    val splitBass by viewModel.splitBass.collectAsStateWithLifecycle()
+    val splitMelody by viewModel.splitMelody.collectAsStateWithLifecycle()
+
     val activeTrack by viewModel.activeTrack.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
     val playbackProgress by viewModel.playbackProgress.collectAsStateWithLifecycle()
@@ -68,8 +73,10 @@ fun VocalSeparatorApp(
 
     val vocalVol by viewModel.vocalVolume.collectAsStateWithLifecycle()
     val instVol by viewModel.instrumentalVolume.collectAsStateWithLifecycle()
+    val bassVol by viewModel.bassVolume.collectAsStateWithLifecycle()
+    val melodyVol by viewModel.melodyVolume.collectAsStateWithLifecycle()
 
-    // Color definitions for a gorgeous Slate/Cyan dark premium vibe
+    // Color palette definitions for a gorgeous premium Slate dark feel
     val darkSlateBg = Color(0xFF0F172A)
     val cardBg = Color(0xFF1E293B)
     val neonTeal = Color(0xFF06B6D4)
@@ -93,7 +100,7 @@ fun VocalSeparatorApp(
                 title = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Audiotrack,
@@ -102,7 +109,7 @@ fun VocalSeparatorApp(
                             modifier = Modifier.size(28.dp)
                         )
                         Text(
-                            text = "AcouSTIC Vocal Splitter",
+                            text = "AcouSTIC Splitter Pro",
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             style = MaterialTheme.typography.titleLarge
@@ -127,9 +134,9 @@ fun VocalSeparatorApp(
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
-                contentPadding = PaddingValues(bottom = if (activeTrack != null) 300.dp else 40.dp)
+                contentPadding = PaddingValues(bottom = if (activeTrack != null) 320.dp else 40.dp)
             ) {
-                // Section: Trust philosophies
+                // Section: App Privacy Philosophy Card
                 item {
                     Column(
                         modifier = Modifier
@@ -166,7 +173,7 @@ fun VocalSeparatorApp(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "All voice processing takes place strictly on your device. Your audio is never uploaded to any cloud server.",
+                            text = "All voice separation and audio encoding take place strictly offline on-device. Your media is never uploaded to any cloud server.",
                             color = Color.White.copy(alpha = 0.75f),
                             fontSize = 11.sp,
                             textAlign = TextAlign.Center,
@@ -175,7 +182,7 @@ fun VocalSeparatorApp(
                     }
                 }
 
-                // Section: Pick & separate controller
+                // Section: Primary splitter controller Card
                 item {
                     Card(
                         modifier = Modifier
@@ -197,7 +204,7 @@ fun VocalSeparatorApp(
                             )
 
                             if (selectedFileUri == null) {
-                                // Empty state pick button
+                                // Clear Picker Button State
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -232,7 +239,7 @@ fun VocalSeparatorApp(
                                     }
                                 }
                             } else {
-                                // Audio file selected view
+                                // Audio loaded and Pre-generation Options Panel
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -275,14 +282,77 @@ fun VocalSeparatorApp(
                                     }
                                 }
 
-                                // Separation strength control
+                                // Custom Output File Name
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "Custom Output Base Name",
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    OutlinedTextField(
+                                        value = customOutputName,
+                                        onValueChange = { viewModel.customOutputName.value = it },
+                                        placeholder = { Text("Output Prefix...", color = Color.White.copy(alpha = 0.3f)) },
+                                        modifier = Modifier.fillMaxWidth().testTag("custom_name_input"),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White,
+                                            focusedBorderColor = neonTeal,
+                                            unfocusedBorderColor = lightBorder,
+                                            focusedContainerColor = darkSlateBg,
+                                            unfocusedContainerColor = darkSlateBg
+                                        ),
+                                        singleLine = true
+                                    )
+                                }
+
+
+
+                                // Interactive Multi-track target checklists
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = "Select Tracks to Extract",
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    
+                                    TrackIsolationCheckbox(
+                                        title = "Vocals and Instrumentals (Essential)",
+                                        subtitle = "Separates Voices and Core Backing tracks",
+                                        checked = true,
+                                        onCheckedChange = { /* Mandatory */ },
+                                        enabled = false,
+                                        accentColor = neonTeal
+                                    )
+                                    TrackIsolationCheckbox(
+                                        title = "Rhythm Track (Bass & Drums)",
+                                        subtitle = "Stems out the lower-end drive frequencies",
+                                        checked = splitBass,
+                                        onCheckedChange = { viewModel.splitBass.value = it },
+                                        enabled = true,
+                                        accentColor = neonTeal
+                                    )
+                                    TrackIsolationCheckbox(
+                                        title = "Melody Track (Ambient Highs)",
+                                        subtitle = "Extracts solos, leads, and high-panned elements",
+                                        checked = splitMelody,
+                                        onCheckedChange = { viewModel.splitMelody.value = it },
+                                        enabled = true,
+                                        accentColor = neonTeal
+                                    )
+                                }
+
+                                // Original separation strength config
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text(
-                                            text = "Vocal Separation Intensity",
+                                            text = "Vocal Cancellation Intensity",
                                             color = Color.White.copy(alpha = 0.8f),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Medium
@@ -305,22 +375,11 @@ fun VocalSeparatorApp(
                                         ),
                                         modifier = Modifier.testTag("strength_slider")
                                     )
-                                    Text(
-                                        text = if (separationIntensity < 0.8f) {
-                                            "Preserves instrument wide stereos, mild vocal dampening"
-                                        } else if (separationIntensity > 1.3f) {
-                                            "High separation, extreme center cancellation (best vocal removal)"
-                                        } else {
-                                            "Balanced separation for clean voice track"
-                                        },
-                                        color = Color.White.copy(alpha = 0.5f),
-                                        fontSize = 10.sp
-                                    )
                                 }
 
                                 Spacer(modifier = Modifier.height(6.dp))
 
-                                // Start processing action button
+                                // Action processing triggering button
                                 Button(
                                     onClick = { viewModel.startProcessing() },
                                     modifier = Modifier
@@ -332,11 +391,11 @@ fun VocalSeparatorApp(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Filled.PlayArrow,
-                                        contentDescription = "Play"
+                                        contentDescription = "Separator trigger"
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Split Vocal & Music Local",
+                                        text = "Separate Selected Audio Paths",
                                         fontWeight = FontWeight.Bold,
                                         color = Color.White,
                                         fontSize = 14.sp
@@ -347,7 +406,7 @@ fun VocalSeparatorApp(
                     }
                 }
 
-                // Section: Processing HUD Overlay
+                // Section: Live process overlay hud panel
                 if (processingState !is ProcessingState.Idle) {
                     item {
                         Card(
@@ -376,7 +435,7 @@ fun VocalSeparatorApp(
                                             trackColor = lightBorder
                                         )
                                         Text(
-                                            text = "Copying media stream locally to bypass Android file provider security sandbox...",
+                                            text = "Duplicating audio stream to locally buffered sandbox paths to ensure continuous offline read permission...",
                                             color = Color.White.copy(alpha = 0.6f),
                                             fontSize = 12.sp,
                                             lineHeight = 16.sp
@@ -389,7 +448,7 @@ fun VocalSeparatorApp(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = "Analyzing & Splitting...",
+                                                text = "Analyzing & Parsing Steps...",
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color.White,
                                                 fontSize = 16.sp
@@ -409,23 +468,22 @@ fun VocalSeparatorApp(
                                             trackColor = lightBorder
                                         )
 
-                                        // Step status markers
                                         Column(
                                             verticalArrangement = Arrangement.spacedBy(8.dp),
                                             modifier = Modifier.padding(top = 4.dp)
                                         ) {
                                             StepRow(
-                                                label = "Decode input audio streams",
+                                                label = "Decode input audio tracks into raw samples",
                                                 isActive = state.progress > 0.0f,
                                                 isCompleted = state.progress >= 0.85f
                                             )
                                             StepRow(
-                                                label = "Apply offline biquad voice filters & subtraction",
+                                                label = "Apply multitrack separating biquads and filters",
                                                 isActive = state.progress >= 0.15f,
                                                 isCompleted = state.progress >= 0.94f
                                             )
                                             StepRow(
-                                                label = "Prepend high-fidelity WAV containers",
+                                                label = "Compile and encode into $outputFormat standard containers",
                                                 isActive = state.progress >= 0.94f,
                                                 isCompleted = state.progress >= 0.99f
                                             )
@@ -444,14 +502,14 @@ fun VocalSeparatorApp(
                                                 modifier = Modifier.size(24.dp)
                                             )
                                             Text(
-                                                text = "Splitting Complete!",
+                                                text = "Tracks Split Successfully!",
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color.White,
                                                 fontSize = 16.sp
                                             )
                                         }
                                         Text(
-                                            text = "Separated vocal and instrumental tracks are ready. Open the Mixer Player below to control live music!",
+                                            text = "Separated stems are fully rendered and saved. Trigger the interactive Mixer below to balance playback live!",
                                             color = Color.White.copy(alpha = 0.7f),
                                             fontSize = 12.sp,
                                             lineHeight = 16.sp
@@ -477,7 +535,7 @@ fun VocalSeparatorApp(
                                                 modifier = Modifier.size(24.dp)
                                             )
                                             Text(
-                                                text = "Separation Error",
+                                                text = "Separation Failed",
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color.White,
                                                 fontSize = 16.sp
@@ -535,9 +593,9 @@ fun VocalSeparatorApp(
                                 color = Color.White.copy(alpha = 0.4f),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium
-                            )
+                              )
                             Text(
-                                text = "Choose a song above to isolate your first voice track offline!",
+                                text = "Choose a song above to isolate your voice elements completely offline!",
                                 color = Color.White.copy(alpha = 0.3f),
                                 fontSize = 11.sp,
                                 textAlign = TextAlign.Center
@@ -553,10 +611,28 @@ fun VocalSeparatorApp(
                             onPlay = { viewModel.loadTrackIntoPlayer(file) },
                             onDelete = { viewModel.deleteHistoryTrack(file) },
                             onExportVocal = {
-                                exportWavLocal(context, File(file.vocalPath), "${file.originalName.substringBeforeLast(".")}_Vocals.wav")
+                                val cleanName = file.originalName.substringBeforeLast(".")
+                                val ext = File(file.vocalPath).extension
+                                exportAudioLocal(context, File(file.vocalPath), "${cleanName}_Vocals.$ext")
                             },
                             onExportInstrumental = {
-                                exportWavLocal(context, File(file.instrumentalPath), "${file.originalName.substringBeforeLast(".")}_Instrumental.wav")
+                                val cleanName = file.originalName.substringBeforeLast(".")
+                                val ext = File(file.instrumentalPath).extension
+                                exportAudioLocal(context, File(file.instrumentalPath), "${cleanName}_Instrumental.$ext")
+                            },
+                            onExportBass = {
+                                file.bassPath?.let { path ->
+                                    val cleanName = file.originalName.substringBeforeLast(".")
+                                    val ext = File(path).extension
+                                    exportAudioLocal(context, File(path), "${cleanName}_Bass.$ext")
+                                }
+                            },
+                            onExportMelody = {
+                                file.melodyPath?.let { path ->
+                                    val cleanName = file.originalName.substringBeforeLast(".")
+                                    val ext = File(path).extension
+                                    exportAudioLocal(context, File(path), "${cleanName}_Melody.$ext")
+                                }
                             },
                             neonTeal = neonTeal,
                             cardBg = cardBg,
@@ -566,7 +642,7 @@ fun VocalSeparatorApp(
                 }
             }
 
-            // Sync Interactive Multi-Track Player Mixer
+            // Sync Interactive Multi-Track Player Mixer Board
             AnimatedVisibility(
                 visible = activeTrack != null,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -576,9 +652,15 @@ fun VocalSeparatorApp(
                 activeTrack?.let { track ->
                     MixerPlaybackPanel(
                         trackName = track.originalName,
+                        vocalPath = track.vocalPath,
+                        instrumentalPath = track.instrumentalPath,
+                        bassPath = track.bassPath,
+                        melodyPath = track.melodyPath,
                         isPlaying = isPlaying,
                         vocalVol = vocalVol,
                         instVol = instVol,
+                        bassVol = bassVol,
+                        melodyVol = melodyVol,
                         progress = playbackProgress,
                         durationMs = durationMs,
                         currentPositionMs = currentPositionMs,
@@ -586,6 +668,8 @@ fun VocalSeparatorApp(
                         onSeek = { viewModel.seekToFraction(it) },
                         onVocalVolChange = { viewModel.vocalVolume.value = it },
                         onInstrumentVolChange = { viewModel.instrumentalVolume.value = it },
+                        onBassVolChange = { viewModel.bassVolume.value = it },
+                        onMelodyVolChange = { viewModel.melodyVolume.value = it },
                         onClose = { viewModel.stopPlayback() },
                         darkSlateBg = darkSlateBg,
                         cardBg = cardBg,
@@ -624,6 +708,91 @@ fun StepRow(label: String, isActive: Boolean, isCompleted: Boolean) {
 }
 
 @Composable
+fun FormatSelectionCard(
+    format: String,
+    label: String,
+    subtext: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    accentColor: Color,
+    cardColor: Color,
+    borderColor: Color
+) {
+    Card(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onClick() },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) accentColor.copy(alpha = 0.12f) else cardColor
+        ),
+        border = BorderStroke(1.dp, if (selected) accentColor else borderColor)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = label,
+                fontWeight = FontWeight.Bold,
+                color = if (selected) accentColor else Color.White,
+                fontSize = 13.sp
+            )
+            Text(
+                text = subtext,
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 10.sp
+            )
+        }
+    }
+}
+
+@Composable
+fun TrackIsolationCheckbox(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean,
+    accentColor: Color
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.White.copy(alpha = 0.03f))
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
+            .padding(vertical = 10.dp, horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = Color.White,
+                fontWeight = FontWeight.Medium,
+                fontSize = 12.sp
+            )
+            Text(
+                text = subtitle,
+                color = Color.White.copy(alpha = 0.45f),
+                fontSize = 10.sp
+            )
+        }
+        Checkbox(
+            checked = checked,
+            onCheckedChange = if (enabled) onCheckedChange else null,
+            enabled = enabled,
+            colors = CheckboxDefaults.colors(
+                checkedColor = accentColor,
+                checkmarkColor = Color.White,
+                uncheckedColor = Color.White.copy(alpha = 0.3f)
+            )
+        )
+    }
+}
+
+@Composable
 fun HistoryTrackCard(
     file: ProcessedFile,
     isActive: Boolean,
@@ -632,11 +801,14 @@ fun HistoryTrackCard(
     onDelete: () -> Unit,
     onExportVocal: () -> Unit,
     onExportInstrumental: () -> Unit,
+    onExportBass: () -> Unit,
+    onExportMelody: () -> Unit,
     neonTeal: Color,
     cardBg: Color,
     lightBorder: Color
 ) {
     var expandedMenu by remember { mutableStateOf(false) }
+    val formatLabel = if (file.vocalPath.endsWith(".m4a")) "M4A (AAC)" else "WAV"
 
     Card(
         modifier = Modifier
@@ -653,7 +825,6 @@ fun HistoryTrackCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Play action circle
                 IconButton(
                     onClick = onPlay,
                     modifier = Modifier
@@ -701,10 +872,20 @@ fun HistoryTrackCard(
                             color = Color.White.copy(alpha = 0.5f),
                             fontSize = 11.sp
                         )
+                        Box(
+                            modifier = Modifier
+                                .size(3.dp)
+                                .background(Color.White.copy(alpha = 0.3f), CircleShape)
+                        )
+                        Text(
+                            text = formatLabel,
+                            color = neonTeal,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 
-                // Export & Delete Dropdown
                 Box {
                     IconButton(onClick = { expandedMenu = true }) {
                         Icon(
@@ -719,21 +900,44 @@ fun HistoryTrackCard(
                         modifier = Modifier.background(cardBg)
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Export Isolated Vocals (.wav)", color = Color.White, fontSize = 13.sp) },
-                            leadingIcon = { Icon(Icons.Filled.Headphones, contentDescription = null, tint = neonTeal, modifier = Modifier.size(16.dp)) },
+                            text = { Text("Save Isolated Vocals", color = Color.White, fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Filled.Mic, contentDescription = null, tint = neonTeal, modifier = Modifier.size(16.dp)) },
                             onClick = {
                                 expandedMenu = false
                                 onExportVocal()
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Export Instrumentals (.wav)", color = Color.White, fontSize = 13.sp) },
+                            text = { Text("Save Instrumentals (Core)", color = Color.White, fontSize = 13.sp) },
                             leadingIcon = { Icon(Icons.Filled.MusicNote, contentDescription = null, tint = neonTeal, modifier = Modifier.size(16.dp)) },
                             onClick = {
                                 expandedMenu = false
                                 onExportInstrumental()
                             }
                         )
+                        
+                        if (file.bassPath != null) {
+                            DropdownMenuItem(
+                                text = { Text("Save Bass & Drums", color = Color.White, fontSize = 13.sp) },
+                                leadingIcon = { Icon(Icons.Filled.GraphicEq, contentDescription = null, tint = neonTeal, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    expandedMenu = false
+                                    onExportBass()
+                                }
+                            )
+                        }
+                        
+                        if (file.melodyPath != null) {
+                            DropdownMenuItem(
+                                text = { Text("Save Melodies & Highs", color = Color.White, fontSize = 13.sp) },
+                                leadingIcon = { Icon(Icons.Filled.MusicNote, contentDescription = null, tint = neonTeal, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    expandedMenu = false
+                                    onExportMelody()
+                                }
+                            )
+                        }
+
                         HorizontalDivider(color = lightBorder)
                         DropdownMenuItem(
                             text = { Text("Delete Track", color = Color.Red, fontSize = 13.sp) },
@@ -753,9 +957,15 @@ fun HistoryTrackCard(
 @Composable
 fun MixerPlaybackPanel(
     trackName: String,
+    vocalPath: String,
+    instrumentalPath: String,
+    bassPath: String?,
+    melodyPath: String?,
     isPlaying: Boolean,
     vocalVol: Float,
     instVol: Float,
+    bassVol: Float,
+    melodyVol: Float,
     progress: Float,
     durationMs: Int,
     currentPositionMs: Int,
@@ -763,6 +973,8 @@ fun MixerPlaybackPanel(
     onSeek: (Float) -> Unit,
     onVocalVolChange: (Float) -> Unit,
     onInstrumentVolChange: (Float) -> Unit,
+    onBassVolChange: (Float) -> Unit,
+    onMelodyVolChange: (Float) -> Unit,
     onClose: () -> Unit,
     darkSlateBg: Color,
     cardBg: Color,
@@ -779,9 +991,9 @@ fun MixerPlaybackPanel(
     ) {
         Column(
             modifier = Modifier
-                .navigationBarsPadding() // Ensures bottom soft drawer is high enough on gesture navs
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .navigationBarsPadding()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Header
             Row(
@@ -791,17 +1003,17 @@ fun MixerPlaybackPanel(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "SYNC MULTI-TRACK MIXER",
+                        text = "DYNAMIC 4-STEM SYNC MIXER",
                         color = neonTeal,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
-                        letterSpacing = 1.sp
+                        letterSpacing = 0.8.sp
                     )
                     Text(
                         text = trackName,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -815,7 +1027,7 @@ fun MixerPlaybackPanel(
                 }
             }
 
-            // Real Canvas Visualizer Wave
+            // Waveform Visualizer
             AudioVisualizer(
                 progress = progress,
                 isPlaying = isPlaying,
@@ -851,87 +1063,76 @@ fun MixerPlaybackPanel(
                 }
             }
 
-            // Real-Time Mixer Sliders Dashboard
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Vocal track card
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(darkSlateBg)
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+            // Real-Time 4-Track Mixing Dashboard
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(Icons.Filled.Mic, contentDescription = null, tint = neonTeal, modifier = Modifier.size(16.dp))
-                            Text("Voices", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        Text(
-                            text = "${(vocalVol * 100).toInt()}%",
-                            color = neonTeal,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Slider(
-                        value = vocalVol,
-                        onValueChange = onVocalVolChange,
-                        modifier = Modifier.testTag("voc_volume_slider"),
-                        colors = SliderDefaults.colors(
-                            thumbColor = neonTeal,
-                            activeTrackColor = neonTeal,
-                            inactiveTrackColor = lightBorder
-                        )
+                    // Vocals
+                    TrackSliderCard(
+                        icon = Icons.Filled.Mic,
+                        title = "Voices",
+                        volume = vocalVol,
+                        onVolumeChange = onVocalVolChange,
+                        accentColor = neonTeal,
+                        backgroundColor = darkSlateBg,
+                        borderColor = lightBorder,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    // Core Music
+                    TrackSliderCard(
+                        icon = Icons.Filled.MusicNote,
+                        title = "Instruments",
+                        volume = instVol,
+                        onVolumeChange = onInstrumentVolChange,
+                        accentColor = neonTeal,
+                        backgroundColor = darkSlateBg,
+                        borderColor = lightBorder,
+                        modifier = Modifier.weight(1f)
                     )
                 }
 
-                // Instrumental track card
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(darkSlateBg)
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                if (bassPath != null || melodyPath != null) {
                     Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(Icons.Filled.MusicNote, contentDescription = null, tint = neonTeal, modifier = Modifier.size(16.dp))
-                            Text("Music", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        if (bassPath != null) {
+                            TrackSliderCard(
+                                icon = Icons.Filled.GraphicEq,
+                                title = "Bass/Drums",
+                                volume = bassVol,
+                                onVolumeChange = onBassVolChange,
+                                accentColor = neonTeal,
+                                backgroundColor = darkSlateBg,
+                                borderColor = lightBorder,
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
                         }
-                        Text(
-                            text = "${(instVol * 100).toInt()}%",
-                            color = neonTeal,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+
+                        if (melodyPath != null) {
+                            TrackSliderCard(
+                                icon = Icons.Filled.MusicNote,
+                                title = "Melody/Highs",
+                                volume = melodyVol,
+                                onVolumeChange = onMelodyVolChange,
+                                accentColor = neonTeal,
+                                backgroundColor = darkSlateBg,
+                                borderColor = lightBorder,
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
                     }
-                    Slider(
-                        value = instVol,
-                        onValueChange = onInstrumentVolChange,
-                        modifier = Modifier.testTag("inst_volume_slider"),
-                        colors = SliderDefaults.colors(
-                            thumbColor = neonTeal,
-                            activeTrackColor = neonTeal,
-                            inactiveTrackColor = lightBorder
-                        )
-                    )
                 }
             }
 
-            // Primary Play / Pause controllers
+            // Central Playback Controls
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
@@ -939,7 +1140,7 @@ fun MixerPlaybackPanel(
                 IconButton(
                     onClick = onTogglePlay,
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(50.dp)
                         .background(neonTeal, CircleShape)
                         .testTag("mixer_play_pause_button")
                 ) {
@@ -947,11 +1148,70 @@ fun MixerPlaybackPanel(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = "Mixer playback toggle",
                         tint = Color.White,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(26.dp)
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+fun TrackSliderCard(
+    icon: ImageVector,
+    title: String,
+    volume: Float,
+    onVolumeChange: (Float) -> Unit,
+    accentColor: Color,
+    backgroundColor: Color,
+    borderColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(backgroundColor)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
+            }
+            Text(
+                text = "${(volume * 100).toInt()}%",
+                color = accentColor,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Slider(
+            value = volume,
+            onValueChange = onVolumeChange,
+            colors = SliderDefaults.colors(
+                thumbColor = accentColor,
+                activeTrackColor = accentColor,
+                inactiveTrackColor = borderColor
+            )
+        )
     }
 }
 
@@ -974,19 +1234,23 @@ private fun formatSize(bytes: Long): String {
 }
 
 /**
- * Offline export directly to Music folder using modern MediaStore
+ * Robust export directly to Music folder using modern MediaStore, auto-detecting
+ * correct MIME type and suffix for either lossless WAV or AAC M4A files.
  */
-private fun exportWavLocal(context: Context, file: File, displayName: String) {
+private fun exportAudioLocal(context: Context, file: File, displayName: String) {
     if (!file.exists()) {
-        Toast.makeText(context, "Audio source not found on disk.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Audio source file not found on disk.", Toast.LENGTH_SHORT).show()
         return
     }
 
     try {
+        val ext = file.extension.lowercase()
+        val mimeType = if (ext == "m4a") "audio/mp4" else "audio/wav"
+        
         val resolver = context.contentResolver
         val contentValues = ContentValues().apply {
             put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
+            put(MediaStore.Audio.Media.MIME_TYPE, mimeType)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Audio.Media.RELATIVE_PATH, Environment.DIRECTORY_MUSIC + "/AcousticSplitter")
                 put(MediaStore.Audio.Media.IS_PENDING, 1)
@@ -1007,12 +1271,12 @@ private fun exportWavLocal(context: Context, file: File, displayName: String) {
                 resolver.update(uri, contentValues, null, null)
             }
 
-            Toast.makeText(context, "$displayName exported to Music directory", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "$displayName exported successfully!", Toast.LENGTH_LONG).show()
         } else {
             Toast.makeText(context, "Fail to register destination path in MediaStore", Toast.LENGTH_SHORT).show()
         }
     } catch (e: Exception) {
-        Log.e("VocalSeparatorApp", "WAV export failure", e)
-        Toast.makeText(context, "WAV Export failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        Log.e("VocalSeparatorApp", "Audio export failure", e)
+        Toast.makeText(context, "Export failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
     }
 }

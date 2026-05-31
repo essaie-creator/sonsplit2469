@@ -10,7 +10,7 @@ class BiquadFilter(
     var fs: Double,
     var q: Double = 0.707
 ) {
-    enum class Type { BANDPASS, NOTCH }
+    enum class Type { BANDPASS, NOTCH, LOWPASS, HIGHPASS }
 
     private var b0 = 1.0; private var b1 = 0.0; private var b2 = 0.0
     private var a0 = 1.0; private var a1 = 0.0; private var a2 = 0.0
@@ -41,6 +41,22 @@ class BiquadFilter(
                 b0 = 1.0
                 b1 = -2.0 * cs
                 b2 = 1.0
+                a0 = 1.0 + alpha
+                a1 = -2.0 * cs
+                a2 = 1.0 - alpha
+            }
+            Type.LOWPASS -> {
+                b0 = (1.0 - cs) / 2.0
+                b1 = 1.0 - cs
+                b2 = (1.0 - cs) / 2.0
+                a0 = 1.0 + alpha
+                a1 = -2.0 * cs
+                a2 = 1.0 - alpha
+            }
+            Type.HIGHPASS -> {
+                b0 = (1.0 + cs) / 2.0
+                b1 = -(1.0 + cs)
+                b2 = (1.0 + cs) / 2.0
                 a0 = 1.0 + alpha
                 a1 = -2.0 * cs
                 a2 = 1.0 - alpha

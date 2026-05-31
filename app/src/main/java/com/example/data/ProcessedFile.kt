@@ -11,5 +11,7 @@ data class ProcessedFile(
     val instrumentalPath: String,
     val durationMs: Long,
     val timestamp: Long = System.currentTimeMillis(),
-    val fileSize: Long
+    val fileSize: Long,
+    val bassPath: String? = null,
+    val melodyPath: String? = null
 )

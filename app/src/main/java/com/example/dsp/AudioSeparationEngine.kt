@@ -4,6 +4,8 @@ import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaMuxer
+import android.media.MediaCodecInfo
 import android.util.Log
 import java.io.BufferedOutputStream
 import java.io.File
@@ -23,26 +25,48 @@ class AudioSeparationEngine(private val context: Context) {
         fun onError(error: String)
     }
 
+    data class SeparationResult(
+        val vocalPath: String,
+        val instrumentalPath: String,
+        val bassPath: String?,
+        val melodyPath: String?,
+        val durationMs: Long
+    )
+
+    class ProcessedChunk(
+        val vocals: ShortArray,
+        val instrumental: ShortArray,
+        val bass: ShortArray?,
+        val melody: ShortArray?
+    )
+
     /**
-     * Splits source audio into vocals and instrumentals.
-     * Writes WAV files to the app's cache directory.
-     * @return Triple of (vocalWavFile, instrumentalWavFile, durationMs)
+     * Splits source audio into vocals, instrumentals, and optionally bass and melody tracks.
+     * Writes WAV or M4A files to the app's files directory.
+     * @return SeparationResult containing output paths and duration
      */
     fun separateAudio(
         inputPath: String,
         vocalStrength: Float = 1.0f,
         vocalCutoffLow: Double = 130.0,
         vocalCutoffHigh: Double = 3400.0,
+        outputFormat: String = "WAV",
+        splitBass: Boolean = true,
+        splitMelody: Boolean = true,
         listener: ProgressListener
-    ): Triple<File, File, Long>? {
+    ): SeparationResult? {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         
         val vocPcmFile = File(context.cacheDir, "voc_temp.pcm")
         val instPcmFile = File(context.cacheDir, "inst_temp.pcm")
+        val bassPcmFile = File(context.cacheDir, "bass_temp.pcm")
+        val melodyPcmFile = File(context.cacheDir, "melody_temp.pcm")
         
         var vocPcmOut: BufferedOutputStream? = null
         var instPcmOut: BufferedOutputStream? = null
+        var bassPcmOut: BufferedOutputStream? = null
+        var melodyPcmOut: BufferedOutputStream? = null
 
         try {
             extractor.setDataSource(inputPath)
@@ -79,6 +103,12 @@ class AudioSeparationEngine(private val context: Context) {
             // Initialize temp streams
             vocPcmOut = BufferedOutputStream(FileOutputStream(vocPcmFile))
             instPcmOut = BufferedOutputStream(FileOutputStream(instPcmFile))
+            if (splitBass) {
+                bassPcmOut = BufferedOutputStream(FileOutputStream(bassPcmFile))
+            }
+            if (splitMelody) {
+                melodyPcmOut = BufferedOutputStream(FileOutputStream(melodyPcmFile))
+            }
 
             val bufferInfo = MediaCodec.BufferInfo()
             var isInputEOS = false
@@ -87,14 +117,20 @@ class AudioSeparationEngine(private val context: Context) {
             var sampleRate = 44100
             var channels = 2
 
-            // Default filters (will be re-initialized when output format changes)
-            var vocalFilter = BiquadFilter(BiquadFilter.Type.BANDPASS, vocalCutoffLow, sampleRate.toDouble())
-            var notchFilter = BiquadFilter(BiquadFilter.Type.NOTCH, 1000.0, sampleRate.toDouble(), 0.5)
+            // Initialize DSP filters
+            var vocFilterL_hp = BiquadFilter(BiquadFilter.Type.HIGHPASS, 120.0, sampleRate.toDouble())
+            var vocFilterL_lp = BiquadFilter(BiquadFilter.Type.LOWPASS, 3800.0, sampleRate.toDouble())
+            var vocFilterR_hp = BiquadFilter(BiquadFilter.Type.HIGHPASS, 120.0, sampleRate.toDouble())
+            var vocFilterR_lp = BiquadFilter(BiquadFilter.Type.LOWPASS, 3800.0, sampleRate.toDouble())
+            
+            var bassFilterL = BiquadFilter(BiquadFilter.Type.LOWPASS, 160.0, sampleRate.toDouble())
+            var bassFilterR = BiquadFilter(BiquadFilter.Type.LOWPASS, 160.0, sampleRate.toDouble())
+            var melodyFilterL = BiquadFilter(BiquadFilter.Type.HIGHPASS, 4500.0, sampleRate.toDouble())
+            var melodyFilterR = BiquadFilter(BiquadFilter.Type.HIGHPASS, 4500.0, sampleRate.toDouble())
 
             var totalBytesWritten = 0L
 
             while (!isOutputEOS) {
-                // 1. Supply raw buffers to decoder
                 if (!isInputEOS) {
                     val inputBufferIndex = codec.dequeueInputBuffer(TIMEOUT_US)
                     if (inputBufferIndex >= 0) {
@@ -121,7 +157,6 @@ class AudioSeparationEngine(private val context: Context) {
                                 )
                                 extractor.advance()
 
-                                // Update progress based on extractor sample time shadow
                                 if (durationUs > 0) {
                                     val progress = sampleTime.toFloat() / durationUs.toFloat()
                                     listener.onProgress(progress.coerceIn(0f, 0.95f))
@@ -131,7 +166,6 @@ class AudioSeparationEngine(private val context: Context) {
                     }
                 }
 
-                // 2. Retrieve uncompressed buffers from decoder
                 val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
                 when (outputBufferIndex) {
                     MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
@@ -139,14 +173,17 @@ class AudioSeparationEngine(private val context: Context) {
                         sampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                         channels = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                         Log.d(TAG, "Decoder output format changed: Sample Rate = $sampleRate, Channels = $channels")
-                        vocalFilter.configure(vocalCutoffLow, sampleRate.toDouble())
-                        notchFilter.configure(1000.0, sampleRate.toDouble(), 0.5)
+                        vocFilterL_hp.configure(120.0, sampleRate.toDouble())
+                        vocFilterL_lp.configure(3800.0, sampleRate.toDouble())
+                        vocFilterR_hp.configure(120.0, sampleRate.toDouble())
+                        vocFilterR_lp.configure(3800.0, sampleRate.toDouble())
+                        bassFilterL.configure(160.0, sampleRate.toDouble())
+                        bassFilterR.configure(160.0, sampleRate.toDouble())
+                        melodyFilterL.configure(4500.0, sampleRate.toDouble())
+                        melodyFilterR.configure(4500.0, sampleRate.toDouble())
                     }
                     MediaCodec.INFO_TRY_AGAIN_LATER -> {
                         // Decoder is digesting/caching buffers
-                    }
-                    MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> {
-                        // Deprecated but okay
                     }
                     else -> {
                         if (outputBufferIndex >= 0) {
@@ -159,7 +196,6 @@ class AudioSeparationEngine(private val context: Context) {
                                 outBuffer.get(pcmBytes)
                                 outBuffer.clear()
 
-                                // Convert bytes to Short samples (16-bit)
                                 val shortCount = pcmBytes.size / 2
                                 val samples = ShortArray(shortCount)
                                 ByteBuffer.wrap(pcmBytes)
@@ -167,31 +203,58 @@ class AudioSeparationEngine(private val context: Context) {
                                     .asShortBuffer()
                                     .get(samples)
 
-                                // Process with high-performance inline DSP
                                 val processed = processShorts(
                                     inputShorts = samples,
                                     isStereo = channels >= 2,
                                     vocalStrength = vocalStrength,
-                                    vocalFilter = vocalFilter,
-                                    notchFilter = notchFilter
+                                    vocFilterL_hp = vocFilterL_hp,
+                                    vocFilterL_lp = vocFilterL_lp,
+                                    vocFilterR_hp = vocFilterR_hp,
+                                    vocFilterR_lp = vocFilterR_lp,
+                                    splitBass = splitBass,
+                                    bassFilterL = bassFilterL,
+                                    bassFilterR = bassFilterR,
+                                    splitMelody = splitMelody,
+                                    melodyFilterL = melodyFilterL,
+                                    melodyFilterR = melodyFilterR
                                 )
 
-                                // Convert vocal and instrumental shorts back to byte arrays
-                                val rawVocBytes = ByteArray(processed.first.size * 2)
+                                // Convert and write vocals
+                                val rawVocBytes = ByteArray(processed.vocals.size * 2)
                                 ByteBuffer.wrap(rawVocBytes)
                                     .order(ByteOrder.LITTLE_ENDIAN)
                                     .asShortBuffer()
-                                    .put(processed.first)
+                                    .put(processed.vocals)
+                                vocPcmOut.write(rawVocBytes)
 
-                                val rawInstBytes = ByteArray(processed.second.size * 2)
+                                // Convert and write instrumentals
+                                val rawInstBytes = ByteArray(processed.instrumental.size * 2)
                                 ByteBuffer.wrap(rawInstBytes)
                                     .order(ByteOrder.LITTLE_ENDIAN)
                                     .asShortBuffer()
-                                    .put(processed.second)
-
-                                // Write chunk to temporary PCM files
-                                vocPcmOut.write(rawVocBytes)
+                                    .put(processed.instrumental)
                                 instPcmOut.write(rawInstBytes)
+
+                                // Convert and write bass
+                                if (splitBass && processed.bass != null && bassPcmOut != null) {
+                                    val rawBassBytes = ByteArray(processed.bass.size * 2)
+                                    ByteBuffer.wrap(rawBassBytes)
+                                        .order(ByteOrder.LITTLE_ENDIAN)
+                                        .asShortBuffer()
+                                        .put(processed.bass)
+                                    bassPcmOut.write(rawBassBytes)
+                                }
+
+                                // Convert and write melody
+                                if (splitMelody && processed.melody != null && melodyPcmOut != null) {
+                                    val rawMelBytes = ByteArray(processed.melody.size * 2)
+                                    ByteBuffer.wrap(rawMelBytes)
+                                        .order(ByteOrder.LITTLE_ENDIAN)
+                                        .asShortBuffer()
+                                        .put(processed.melody)
+                                    melodyPcmOut.write(rawMelBytes)
+                                }
+
                                 totalBytesWritten += rawVocBytes.size
                             }
 
@@ -208,26 +271,67 @@ class AudioSeparationEngine(private val context: Context) {
             // Close temp outputs to flush buffer caches
             vocPcmOut.close()
             instPcmOut.close()
+            bassPcmOut?.close()
+            melodyPcmOut?.close()
+            
             vocPcmOut = null
             instPcmOut = null
+            bassPcmOut = null
+            melodyPcmOut = null
 
-            // 3. Prepend standard WAV header
-            val outputVocalFile = File(context.filesDir, "Separated_Vocals_${System.currentTimeMillis()}.wav")
-            val outputInstFile = File(context.filesDir, "Separated_Instrumental_${System.currentTimeMillis()}.wav")
-
-            listener.onProgress(0.97f)
-            convertPcmToWav(vocPcmFile, outputVocalFile, sampleRate, channels)
+            // Determine output files format & extensions
+            val formattingM4A = outputFormat.uppercase() == "M4A"
+            val ext = if (formattingM4A) "m4a" else "wav"
             
-            listener.onProgress(0.99f)
-            convertPcmToWav(instPcmFile, outputInstFile, sampleRate, channels)
+            val outputVocalFile = File(context.filesDir, "Separated_Vocals_${System.currentTimeMillis()}.$ext")
+            val outputInstFile = File(context.filesDir, "Separated_Instrumental_${System.currentTimeMillis()}.$ext")
+            val outputBassFile = if (splitBass) File(context.filesDir, "Separated_Bass_${System.currentTimeMillis()}.$ext") else null
+            val outputMelodyFile = if (splitMelody) File(context.filesDir, "Separated_Melody_${System.currentTimeMillis()}.$ext") else null
+
+            listener.onProgress(0.96f)
+            if (formattingM4A) {
+                convertPcmToM4a(vocPcmFile, outputVocalFile, sampleRate, channels)
+                listener.onProgress(0.97f)
+                convertPcmToM4a(instPcmFile, outputInstFile, sampleRate, channels)
+                
+                if (splitBass && outputBassFile != null && bassPcmFile.exists()) {
+                    listener.onProgress(0.98f)
+                    convertPcmToM4a(bassPcmFile, outputBassFile, sampleRate, channels)
+                }
+                if (splitMelody && outputMelodyFile != null && melodyPcmFile.exists()) {
+                    listener.onProgress(0.99f)
+                    convertPcmToM4a(melodyPcmFile, outputMelodyFile, sampleRate, channels)
+                }
+            } else {
+                convertPcmToWav(vocPcmFile, outputVocalFile, sampleRate, channels)
+                listener.onProgress(0.97f)
+                convertPcmToWav(instPcmFile, outputInstFile, sampleRate, channels)
+                
+                if (splitBass && outputBassFile != null && bassPcmFile.exists()) {
+                    listener.onProgress(0.98f)
+                    convertPcmToWav(bassPcmFile, outputBassFile, sampleRate, channels)
+                }
+                if (splitMelody && outputMelodyFile != null && melodyPcmFile.exists()) {
+                    listener.onProgress(0.99f)
+                    convertPcmToWav(melodyPcmFile, outputMelodyFile, sampleRate, channels)
+                }
+            }
 
             listener.onProgress(1.0f)
 
             // Delete temporary scratch PCM files
-            vocPcmFile.delete()
-            instPcmFile.delete()
+            if (vocPcmFile.exists()) vocPcmFile.delete()
+            if (instPcmFile.exists()) instPcmFile.delete()
+            if (bassPcmFile.exists()) bassPcmFile.delete()
+            if (melodyPcmFile.exists()) melodyPcmFile.delete()
 
-            return Triple(outputVocalFile, outputInstFile, durationMs)
+            return SeparationResult(
+                vocalPath = outputVocalFile.absolutePath,
+                instrumentalPath = outputInstFile.absolutePath,
+                bassPath = outputBassFile?.absolutePath,
+                melodyPath = outputMelodyFile?.absolutePath,
+                durationMs = durationMs
+            )
 
         } catch (e: Exception) {
             Log.e(TAG, "Audio separation failed", e)
@@ -237,6 +341,8 @@ class AudioSeparationEngine(private val context: Context) {
             try {
                 vocPcmOut?.close()
                 instPcmOut?.close()
+                bassPcmOut?.close()
+                melodyPcmOut?.close()
             } catch (ignored: Exception) {}
             try {
                 codec?.stop()
@@ -245,9 +351,12 @@ class AudioSeparationEngine(private val context: Context) {
             try {
                 extractor.release()
             } catch (ignored: Exception) {}
+            
             // Cleanup temp files if exception occurred
             if (vocPcmFile.exists()) vocPcmFile.delete()
             if (instPcmFile.exists()) instPcmFile.delete()
+            if (bassPcmFile.exists()) bassPcmFile.delete()
+            if (melodyPcmFile.exists()) melodyPcmFile.delete()
         }
     }
 
@@ -255,12 +364,22 @@ class AudioSeparationEngine(private val context: Context) {
         inputShorts: ShortArray,
         isStereo: Boolean,
         vocalStrength: Float,
-        vocalFilter: BiquadFilter,
-        notchFilter: BiquadFilter
-    ): Pair<ShortArray, ShortArray> {
+        vocFilterL_hp: BiquadFilter,
+        vocFilterL_lp: BiquadFilter,
+        vocFilterR_hp: BiquadFilter,
+        vocFilterR_lp: BiquadFilter,
+        splitBass: Boolean,
+        bassFilterL: BiquadFilter,
+        bassFilterR: BiquadFilter,
+        splitMelody: Boolean,
+        melodyFilterL: BiquadFilter,
+        melodyFilterR: BiquadFilter
+    ): ProcessedChunk {
         val size = inputShorts.size
         val vocalShorts = ShortArray(size)
         val instShorts = ShortArray(size)
+        val bassShorts = if (splitBass) ShortArray(size) else null
+        val melodyShorts = if (splitMelody) ShortArray(size) else null
 
         if (isStereo) {
             var i = 0
@@ -268,20 +387,41 @@ class AudioSeparationEngine(private val context: Context) {
                 val L = inputShorts[i] / 32768f
                 val R = inputShorts[i + 1] / 32768f
 
-                // Isolate vocals: (L + R) / 2 to extract the center lane, then bandpass filter
-                val center = (L + R) / 2f
-                val filteredVocal = vocalFilter.process(center)
+                // Isolate mid frequencies (speech/vocal range) for each channel
+                val L_mid = vocFilterL_lp.process(vocFilterL_hp.process(L))
+                val R_mid = vocFilterR_lp.process(vocFilterR_hp.process(R))
 
-                val vocalShortVal = (filteredVocal * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
-                vocalShorts[i] = vocalShortVal         // left
-                vocalShorts[i + 1] = vocalShortVal     // right
+                // Vocal is centered, so extract the center (in-phase) part of the vocal band
+                val vocal_center = (L_mid + R_mid) / 2f
 
-                // Remove vocals (Instrumentals) via side expansion: L_inst = (L - alpha * R) / (1 + alpha)
-                val L_inst = (L - vocalStrength * R) / (1f + vocalStrength)
-                val R_inst = (R - vocalStrength * L) / (1f + vocalStrength)
+                // Isolate output vocals
+                val vocalOut = vocal_center * vocalStrength
+                val vocalShortVal = (vocalOut * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                vocalShorts[i] = vocalShortVal
+                vocalShorts[i + 1] = vocalShortVal
+
+                // The instrumental track is the original signal minus the extracted vocal center
+                val L_inst = L - vocalStrength * vocal_center
+                val R_inst = R - vocalStrength * vocal_center
 
                 instShorts[i] = (L_inst * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
                 instShorts[i + 1] = (R_inst * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+
+                // Process Bass (lowpass filtered instrumental)
+                if (splitBass && bassShorts != null) {
+                    val L_bass = bassFilterL.process(L_inst)
+                    val R_bass = bassFilterR.process(R_inst)
+                    bassShorts[i] = (L_bass * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                    bassShorts[i + 1] = (R_bass * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                }
+
+                // Process Melody (highpass filtered instrumental)
+                if (splitMelody && melodyShorts != null) {
+                    val L_mel = melodyFilterL.process(L_inst)
+                    val R_mel = melodyFilterR.process(R_inst)
+                    melodyShorts[i] = (L_mel * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                    melodyShorts[i + 1] = (R_mel * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                }
 
                 i += 2
             }
@@ -290,15 +430,26 @@ class AudioSeparationEngine(private val context: Context) {
             for (i in 0 until size) {
                 val s = inputShorts[i] / 32768f
 
-                val v = vocalFilter.process(s)
-                vocalShorts[i] = (v * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                val v = vocFilterL_lp.process(vocFilterL_hp.process(s))
+                val vocalOut = v * vocalStrength
+                vocalShorts[i] = (vocalOut * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
 
-                val inst = notchFilter.process(s)
+                val inst = s - vocalStrength * v
                 instShorts[i] = (inst * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+
+                if (splitBass && bassShorts != null) {
+                    val b = bassFilterL.process(inst)
+                    bassShorts[i] = (b * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                }
+
+                if (splitMelody && melodyShorts != null) {
+                    val m = melodyFilterL.process(inst)
+                    melodyShorts[i] = (m * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                }
             }
         }
 
-        return Pair(vocalShorts, instShorts)
+        return ProcessedChunk(vocalShorts, instShorts, bassShorts, melodyShorts)
     }
 
     private fun convertPcmToWav(pcmFile: File, wavFile: File, sampleRate: Int, channels: Int) {
@@ -374,5 +525,118 @@ class AudioSeparationEngine(private val context: Context) {
         header[42] = (totalAudioLen shr 16 and 0xff).toByte()
         header[43] = (totalAudioLen shr 24 and 0xff).toByte()
         out.write(header, 0, 44)
+    }
+
+    private fun convertPcmToM4a(
+        pcmFile: File,
+        m4aFile: File,
+        sampleRate: Int,
+        channels: Int,
+        bitrate: Int = 128000
+    ) {
+        if (pcmFile.length() == 0L) return
+        val mime = "audio/mp4a-latm"
+        val format = MediaFormat.createAudioFormat(mime, sampleRate, channels)
+        format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+        format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+        format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 64 * 1024)
+
+        val encoder = MediaCodec.createEncoderByType(mime)
+        encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        encoder.start()
+
+        val muxer = MediaMuxer(m4aFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        var trackIndex = -1
+        var isMuxerStarted = false
+
+        val fis = FileInputStream(pcmFile)
+        val bufferInfo = MediaCodec.BufferInfo()
+        val inputBuffer = ByteArray(16384)
+        var isInputEOS = false
+        var isOutputEOS = false
+        var presentationTimeUs = 0L
+
+        val bytesPerSample = 2 // 16-bit PCM
+        val bytesPerSecond = sampleRate * channels * bytesPerSample
+
+        try {
+            while (!isOutputEOS) {
+                // Supply input buffers to encoder
+                if (!isInputEOS) {
+                    val inputBufferIndex = encoder.dequeueInputBuffer(10000)
+                    if (inputBufferIndex >= 0) {
+                        val encoderInputBuffer = encoder.getInputBuffer(inputBufferIndex)
+                        if (encoderInputBuffer != null) {
+                            encoderInputBuffer.clear()
+                            val bytesRead = fis.read(inputBuffer)
+                            if (bytesRead < 0) {
+                                encoder.queueInputBuffer(
+                                    inputBufferIndex,
+                                    0,
+                                    0,
+                                    presentationTimeUs,
+                                    MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                )
+                                isInputEOS = true
+                            } else {
+                                encoderInputBuffer.put(inputBuffer, 0, bytesRead)
+                                encoder.queueInputBuffer(
+                                    inputBufferIndex,
+                                    0,
+                                    bytesRead,
+                                    presentationTimeUs,
+                                    0
+                                )
+                                presentationTimeUs += (bytesRead.toDouble() / bytesPerSecond * 1000000.0).toLong()
+                            }
+                        }
+                    }
+                }
+
+                // Retrieve output buffers from encoder
+                val outputBufferIndex = encoder.dequeueOutputBuffer(bufferInfo, 10000)
+                if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    if (!isMuxerStarted) {
+                        val newFormat = encoder.outputFormat
+                        trackIndex = muxer.addTrack(newFormat)
+                        muxer.start()
+                        isMuxerStarted = true
+                    }
+                } else if (outputBufferIndex >= 0) {
+                    val encodedData = encoder.getOutputBuffer(outputBufferIndex)
+                    if (encodedData != null) {
+                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                            bufferInfo.size = 0
+                        }
+
+                        if (bufferInfo.size > 0 && isMuxerStarted) {
+                            encodedData.position(bufferInfo.offset)
+                            encodedData.limit(bufferInfo.offset + bufferInfo.size)
+                            muxer.writeSampleData(trackIndex, encodedData, bufferInfo)
+                        }
+                    }
+
+                    encoder.releaseOutputBuffer(outputBufferIndex, false)
+
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        isOutputEOS = true
+                    }
+                }
+            }
+        } finally {
+            try {
+                fis.close()
+            } catch (ignored: Exception) {}
+            try {
+                encoder.stop()
+                encoder.release()
+            } catch (ignored: Exception) {}
+            try {
+                if (isMuxerStarted) {
+                    muxer.stop()
+                }
+                muxer.release()
+            } catch (ignored: Exception) {}
+        }
     }
 }

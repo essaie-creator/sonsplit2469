@@ -44,12 +44,20 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
     private val _selectedFileSize = MutableStateFlow<Long>(0L)
     val selectedFileSize: StateFlow<Long> = _selectedFileSize.asStateFlow()
 
+    // Configurable choices before extracting
+    val outputFormat = MutableStateFlow("M4A") // "WAV" or "M4A" (AAC)
+    val customOutputName = MutableStateFlow("") // Custom output file name
+    val splitBass = MutableStateFlow(true)
+    val splitMelody = MutableStateFlow(true)
+
     // Separators strength configuration
     val separationIntensity = MutableStateFlow(1.0f)
 
     // Sync Mixer Playback Player variables
     private var vocalPlayer: MediaPlayer? = null
     private var instrumentalPlayer: MediaPlayer? = null
+    private var bassPlayer: MediaPlayer? = null
+    private var melodyPlayer: MediaPlayer? = null
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
@@ -63,9 +71,11 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
     private val _durationMs = MutableStateFlow(0)
     val durationMs: StateFlow<Int> = _durationMs.asStateFlow()
 
-    // Volume sliders for live mixing
+    // Volume sliders for live 4-track mixing
     val vocalVolume = MutableStateFlow(1.0f)
     val instrumentalVolume = MutableStateFlow(1.0f)
+    val bassVolume = MutableStateFlow(1.0f)
+    val melodyVolume = MutableStateFlow(1.0f)
 
     // Current active track info loaded in player
     private val _activeTrack = MutableStateFlow<ProcessedFile?>(null)
@@ -93,13 +103,33 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
                 instrumentalPlayer?.setVolume(vol, vol)
             }
         }
+        viewModelScope.launch {
+            bassVolume.collect { vol ->
+                bassPlayer?.setVolume(vol, vol)
+            }
+        }
+        viewModelScope.launch {
+            melodyVolume.collect { vol ->
+                melodyPlayer?.setVolume(vol, vol)
+            }
+        }
     }
 
     fun selectFile(uri: Uri) {
         _selectedFileUri.value = uri
         val entry = getFileInfo(uri, getApplication())
-        _selectedFileName.value = entry?.first ?: "Unknown Audio"
+        val originalFullName = entry?.first ?: "Unknown Audio"
+        _selectedFileName.value = originalFullName
         _selectedFileSize.value = entry?.second ?: 0L
+
+        // Default custom name is the original name without extension
+        val nameWithoutExt = if (originalFullName.contains('.')) {
+            originalFullName.substringBeforeLast('.')
+        } else {
+            originalFullName
+        }
+        customOutputName.value = nameWithoutExt
+
         _processingState.value = ProcessingState.Idle
     }
 
@@ -107,6 +137,7 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
         _selectedFileUri.value = null
         _selectedFileName.value = ""
         _selectedFileSize.value = 0L
+        customOutputName.value = ""
         _processingState.value = ProcessingState.Idle
     }
 
@@ -133,12 +164,19 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
 
             _processingState.value = ProcessingState.Processing(0f)
 
+            val formatChoice = outputFormat.value
+            val isBassTrue = splitBass.value
+            val isMelodyTrue = splitMelody.value
+
             // 2. Perform splitting on Dispatchers.Default
             val result = withContext(Dispatchers.Default) {
                 val engine = AudioSeparationEngine(context)
                 engine.separateAudio(
                     inputPath = cachedFile.absolutePath,
                     vocalStrength = strength,
+                    outputFormat = formatChoice,
+                    splitBass = isBassTrue,
+                    splitMelody = isMelodyTrue,
                     listener = object : AudioSeparationEngine.ProgressListener {
                         override fun onProgress(progress: Float) {
                             _processingState.value = ProcessingState.Processing(progress)
@@ -157,16 +195,31 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
             }
 
             if (result != null) {
-                val (vocF, instF, duration) = result
-                val originalName = _selectedFileName.value
+                // Determine naming: use custom name if provided, otherwise original
+                val userChosenName = customOutputName.value.trim()
+                val originalCleanName = if (userChosenName.isNotEmpty()) {
+                    val ext = if (formatChoice.uppercase() == "M4A") "m4a" else "wav"
+                    "$userChosenName.$ext"
+                } else {
+                    _selectedFileName.value
+                }
 
                 // 3. Save reference in local database (Room)
+                val vocFile = File(result.vocalPath)
+                val instFile = File(result.instrumentalPath)
+                val bassLen = result.bassPath?.let { File(it).length() } ?: 0L
+                val melLen = result.melodyPath?.let { File(it).length() } ?: 0L
+
+                val totalFileSize = vocFile.length() + instFile.length() + bassLen + melLen
+
                 val processedFile = ProcessedFile(
-                    originalName = originalName,
-                    vocalPath = vocF.absolutePath,
-                    instrumentalPath = instF.absolutePath,
-                    durationMs = duration,
-                    fileSize = vocF.length() + instF.length()
+                    originalName = originalCleanName,
+                    vocalPath = result.vocalPath,
+                    instrumentalPath = result.instrumentalPath,
+                    bassPath = result.bassPath,
+                    melodyPath = result.melodyPath,
+                    durationMs = result.durationMs,
+                    fileSize = totalFileSize
                 )
 
                 withContext(Dispatchers.IO) {
@@ -208,6 +261,24 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
                 setVolume(vol, vol)
                 prepare()
             }
+            file.bassPath?.let { path ->
+                bassPlayer = MediaPlayer().apply {
+                    setDataSource(path)
+                    val vol = bassVolume.value
+                    setVolume(vol, vol)
+                    prepare()
+                }
+            } ?: run { bassPlayer = null }
+
+            file.melodyPath?.let { path ->
+                melodyPlayer = MediaPlayer().apply {
+                    setDataSource(path)
+                    val vol = melodyVolume.value
+                    setVolume(vol, vol)
+                    prepare()
+                }
+            } ?: run { melodyPlayer = null }
+
         } catch (e: Exception) {
             Log.e("VocalSeparatorViewModel", "Error creating media players", e)
             _processingState.value = ProcessingState.Error("Playback setup failed. Files might have been moved or deleted.")
@@ -231,6 +302,8 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
         try {
             vocalPlayer?.start()
             instrumentalPlayer?.start()
+            bassPlayer?.start()
+            melodyPlayer?.start()
             _isPlaying.value = true
             startProgressTracker()
         } catch (e: Exception) {
@@ -242,6 +315,8 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
         try {
             vocalPlayer?.pause()
             instrumentalPlayer?.pause()
+            bassPlayer?.pause()
+            melodyPlayer?.pause()
             _isPlaying.value = false
             playbackProgressJob?.cancel()
         } catch (e: Exception) {
@@ -254,6 +329,7 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
         _isPlaying.value = false
         _currentPositionMs.value = 0
         _playbackProgress.value = 0f
+        
         try {
             vocalPlayer?.stop()
             vocalPlayer?.release()
@@ -262,8 +338,19 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
             instrumentalPlayer?.stop()
             instrumentalPlayer?.release()
         } catch (ignored: Exception) {}
+        try {
+            bassPlayer?.stop()
+            bassPlayer?.release()
+        } catch (ignored: Exception) {}
+        try {
+            melodyPlayer?.stop()
+            melodyPlayer?.release()
+        } catch (ignored: Exception) {}
+
         vocalPlayer = null
         instrumentalPlayer = null
+        bassPlayer = null
+        melodyPlayer = null
     }
 
     fun seekToFraction(fraction: Float) {
@@ -283,6 +370,8 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
             try {
                 vocalPlayer?.seekTo(targetMs)
                 instrumentalPlayer?.seekTo(targetMs)
+                bassPlayer?.seekTo(targetMs)
+                melodyPlayer?.seekTo(targetMs)
             } catch (e: Exception) {
                 Log.e("VocalSeparatorViewModel", "Error seeking players", e)
             }
@@ -299,7 +388,6 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
                 if (total > 0) {
                     _playbackProgress.value = currentLocal.toFloat() / total.toFloat()
                     if (currentLocal >= total - 100) {
-                        // Loop or finish
                         seekToFraction(0f)
                         pausePlayback()
                     }
@@ -311,12 +399,20 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
 
     fun deleteHistoryTrack(file: ProcessedFile) {
         viewModelScope.launch(Dispatchers.IO) {
-            // Delete actual WAV files from device
             try {
                 val fVoc = File(file.vocalPath)
                 if (fVoc.exists()) fVoc.delete()
                 val fInst = File(file.instrumentalPath)
                 if (fInst.exists()) fInst.delete()
+                
+                file.bassPath?.let {
+                    val f = File(it)
+                    if (f.exists()) f.delete()
+                }
+                file.melodyPath?.let {
+                    val f = File(it)
+                    if (f.exists()) f.delete()
+                }
             } catch (e: Exception) {
                 Log.e("VocalSeparatorViewModel", "Failed to delete files from disk", e)
             }
