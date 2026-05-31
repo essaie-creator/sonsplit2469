@@ -534,34 +534,45 @@ class AudioSeparationEngine(private val context: Context) {
         channels: Int,
         bitrate: Int = 128000
     ) {
-        if (pcmFile.length() == 0L) return
+        if (pcmFile.length() == 0L) {
+            Log.w(TAG, "PCM file is empty, skipping M4A conversion: ${pcmFile.absolutePath}")
+            return
+        }
+
+        val safeSampleRate = if (sampleRate > 0) sampleRate else 44100
+        val safeChannels = if (channels in 1..8) channels else 2
         val mime = "audio/mp4a-latm"
-        val format = MediaFormat.createAudioFormat(mime, sampleRate, channels)
-        format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-        format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-        format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 64 * 1024)
 
-        val encoder = MediaCodec.createEncoderByType(mime)
-        encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        encoder.start()
-
-        val muxer = MediaMuxer(m4aFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        var trackIndex = -1
+        var encoder: MediaCodec? = null
+        var muxer: MediaMuxer? = null
+        var fis: FileInputStream? = null
         var isMuxerStarted = false
-
-        val fis = FileInputStream(pcmFile)
-        val bufferInfo = MediaCodec.BufferInfo()
-        val inputBuffer = ByteArray(16384)
-        var isInputEOS = false
-        var isOutputEOS = false
-        var presentationTimeUs = 0L
-
-        val bytesPerSample = 2 // 16-bit PCM
-        val bytesPerSecond = sampleRate * channels * bytesPerSample
+        var trackIndex = -1
+        var samplesWritten = 0
 
         try {
+            val format = MediaFormat.createAudioFormat(mime, safeSampleRate, safeChannels)
+            format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+            format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 64 * 1024)
+
+            encoder = MediaCodec.createEncoderByType(mime)
+            encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
+            muxer = MediaMuxer(m4aFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            fis = FileInputStream(pcmFile)
+
+            val bufferInfo = MediaCodec.BufferInfo()
+            val inputBuffer = ByteArray(16384)
+            var isInputEOS = false
+            var isOutputEOS = false
+            
+            val bytesPerSample = 2 // 16-bit PCM
+            val bytesPerSecond = safeSampleRate * safeChannels * bytesPerSample
+            var totalBytesProcessed = 0L
+
             while (!isOutputEOS) {
-                // Supply input buffers to encoder
                 if (!isInputEOS) {
                     val inputBufferIndex = encoder.dequeueInputBuffer(10000)
                     if (inputBufferIndex >= 0) {
@@ -570,6 +581,11 @@ class AudioSeparationEngine(private val context: Context) {
                             encoderInputBuffer.clear()
                             val bytesRead = fis.read(inputBuffer)
                             if (bytesRead < 0) {
+                                val presentationTimeUs = if (bytesPerSecond > 0) {
+                                    (totalBytesProcessed * 1000000L) / bytesPerSecond
+                                } else {
+                                    0L
+                                }
                                 encoder.queueInputBuffer(
                                     inputBufferIndex,
                                     0,
@@ -580,6 +596,11 @@ class AudioSeparationEngine(private val context: Context) {
                                 isInputEOS = true
                             } else {
                                 encoderInputBuffer.put(inputBuffer, 0, bytesRead)
+                                val presentationTimeUs = if (bytesPerSecond > 0) {
+                                    (totalBytesProcessed * 1000000L) / bytesPerSecond
+                                } else {
+                                    0L
+                                }
                                 encoder.queueInputBuffer(
                                     inputBufferIndex,
                                     0,
@@ -587,13 +608,12 @@ class AudioSeparationEngine(private val context: Context) {
                                     presentationTimeUs,
                                     0
                                 )
-                                presentationTimeUs += (bytesRead.toDouble() / bytesPerSecond * 1000000.0).toLong()
+                                totalBytesProcessed += bytesRead
                             }
                         }
                     }
                 }
 
-                // Retrieve output buffers from encoder
                 val outputBufferIndex = encoder.dequeueOutputBuffer(bufferInfo, 10000)
                 if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     if (!isMuxerStarted) {
@@ -609,10 +629,11 @@ class AudioSeparationEngine(private val context: Context) {
                             bufferInfo.size = 0
                         }
 
-                        if (bufferInfo.size > 0 && isMuxerStarted) {
+                        if (bufferInfo.size > 0 && isMuxerStarted && trackIndex >= 0) {
                             encodedData.position(bufferInfo.offset)
                             encodedData.limit(bufferInfo.offset + bufferInfo.size)
                             muxer.writeSampleData(trackIndex, encodedData, bufferInfo)
+                            samplesWritten++
                         }
                     }
 
@@ -623,19 +644,26 @@ class AudioSeparationEngine(private val context: Context) {
                     }
                 }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in convertPcmToM4a for file: ${m4aFile.name}", e)
+            throw e
         } finally {
             try {
-                fis.close()
+                fis?.close()
             } catch (ignored: Exception) {}
             try {
-                encoder.stop()
-                encoder.release()
+                encoder?.stop()
             } catch (ignored: Exception) {}
             try {
-                if (isMuxerStarted) {
-                    muxer.stop()
+                encoder?.release()
+            } catch (ignored: Exception) {}
+            try {
+                if (isMuxerStarted && samplesWritten > 0) {
+                    muxer?.stop()
                 }
-                muxer.release()
+            } catch (ignored: Exception) {}
+            try {
+                muxer?.release()
             } catch (ignored: Exception) {}
         }
     }
