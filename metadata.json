@@ -1,0 +1,8 @@
+{
+  "name": "Vocal Remover & Audio Splitter",
+  "description": "Offline-first vocal separator and audio splitter. Extract precise vocals and clean instrumentals with no limits, zero fees, and complete device-level privacy.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
