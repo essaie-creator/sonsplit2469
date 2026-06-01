@@ -16,3 +16,5 @@
 local.properties
 .env
 debug.keystore
+# Prevent committing generated or exported debug keystore (base64)
+debug.keystore.base64
