@@ -539,6 +539,7 @@ class AudioSeparationEngine(private val context: Context) {
             return
         }
 
+        Log.d(TAG, "convertPcmToM4a: Starting conversion for ${pcmFile.name} (${pcmFile.length()} bytes)")
         val safeSampleRate = if (sampleRate > 0) sampleRate else 44100
         val safeChannels = if (channels in 1..8) channels else 2
         val mime = "audio/mp4a-latm"
@@ -571,6 +572,7 @@ class AudioSeparationEngine(private val context: Context) {
             val bytesPerSample = 2 // 16-bit PCM
             val bytesPerSecond = safeSampleRate * safeChannels * bytesPerSample
             var totalBytesProcessed = 0L
+            var consecutiveTimeouts = 0
 
             while (!isOutputEOS) {
                 if (!isInputEOS) {
@@ -586,6 +588,7 @@ class AudioSeparationEngine(private val context: Context) {
                                 } else {
                                     0L
                                 }
+                                Log.d(TAG, "convertPcmToM4a: Reached PCM EOF. Queueing EOS to encoder. totalBytesProcessed = $totalBytesProcessed")
                                 encoder.queueInputBuffer(
                                     inputBufferIndex,
                                     0,
@@ -621,8 +624,19 @@ class AudioSeparationEngine(private val context: Context) {
                         trackIndex = muxer.addTrack(newFormat)
                         muxer.start()
                         isMuxerStarted = true
+                        Log.d(TAG, "convertPcmToM4a: MediaMuxer started with trackIndex = $trackIndex")
+                    }
+                    consecutiveTimeouts = 0
+                } else if (outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    if (isInputEOS) {
+                        consecutiveTimeouts++
+                        if (consecutiveTimeouts > 150) { // Limit to 1.5 seconds of consecutive wait for EOS
+                            Log.w(TAG, "convertPcmToM4a: Timeout threshold (150) exceeded waiting for encoder output EOS. Breaking loop to prevent freeze.")
+                            break
+                        }
                     }
                 } else if (outputBufferIndex >= 0) {
+                    consecutiveTimeouts = 0
                     val encodedData = encoder.getOutputBuffer(outputBufferIndex)
                     if (encodedData != null) {
                         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
@@ -640,10 +654,12 @@ class AudioSeparationEngine(private val context: Context) {
                     encoder.releaseOutputBuffer(outputBufferIndex, false)
 
                     if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        Log.d(TAG, "convertPcmToM4a: Received EOS signal from encoder output buffer flags.")
                         isOutputEOS = true
                     }
                 }
             }
+            Log.d(TAG, "convertPcmToM4a: Finished successfully. Samples written: $samplesWritten")
         } catch (e: Exception) {
             Log.e(TAG, "Error in convertPcmToM4a for file: ${m4aFile.name}", e)
             throw e
