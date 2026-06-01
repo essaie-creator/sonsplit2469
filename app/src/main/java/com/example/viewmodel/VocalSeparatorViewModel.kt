@@ -77,6 +77,9 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
     val bassVolume = MutableStateFlow(1.0f)
     val melodyVolume = MutableStateFlow(1.0f)
 
+    // Bypass/Compare mode to toggle between original sum-mix (1.0 each) and custom sliders
+    val isCompareModeActive = MutableStateFlow(false)
+
     // Current active track info loaded in player
     private val _activeTrack = MutableStateFlow<ProcessedFile?>(null)
     val activeTrack: StateFlow<ProcessedFile?> = _activeTrack.asStateFlow()
@@ -92,27 +95,39 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
             initialValue = emptyList()
         )
 
-        // Observe volume state changes to adjust player volumes instantly
+        // Observe volume state and compare mode changes to adjust player volumes instantly
         viewModelScope.launch {
-            vocalVolume.collect { vol ->
-                vocalPlayer?.setVolume(vol, vol)
-            }
+            vocalVolume.collect { applyVolumes() }
         }
         viewModelScope.launch {
-            instrumentalVolume.collect { vol ->
-                instrumentalPlayer?.setVolume(vol, vol)
-            }
+            instrumentalVolume.collect { applyVolumes() }
         }
         viewModelScope.launch {
-            bassVolume.collect { vol ->
-                bassPlayer?.setVolume(vol, vol)
-            }
+            bassVolume.collect { applyVolumes() }
         }
         viewModelScope.launch {
-            melodyVolume.collect { vol ->
-                melodyPlayer?.setVolume(vol, vol)
-            }
+            melodyVolume.collect { applyVolumes() }
         }
+        viewModelScope.launch {
+            isCompareModeActive.collect { applyVolumes() }
+        }
+    }
+
+    fun applyVolumes() {
+        val isBypass = isCompareModeActive.value
+        val v = if (isBypass) 1.0f else vocalVolume.value
+        val i = if (isBypass) 1.0f else instrumentalVolume.value
+        val b = if (isBypass) 1.0f else bassVolume.value
+        val m = if (isBypass) 1.0f else melodyVolume.value
+
+        vocalPlayer?.setVolume(v, v)
+        instrumentalPlayer?.setVolume(i, i)
+        bassPlayer?.setVolume(b, b)
+        melodyPlayer?.setVolume(m, m)
+    }
+
+    fun toggleCompareMode() {
+        isCompareModeActive.value = !isCompareModeActive.value
     }
 
     fun selectFile(uri: Uri) {
@@ -162,11 +177,12 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
                 return@launch
             }
 
-            _processingState.value = ProcessingState.Processing(0f)
+            _processingState.value = ProcessingState.Processing(0f, null)
 
             val formatChoice = outputFormat.value
             val isBassTrue = splitBass.value
             val isMelodyTrue = splitMelody.value
+            val startTime = System.currentTimeMillis()
 
             // 2. Perform splitting on Dispatchers.Default
             val result = withContext(Dispatchers.Default) {
@@ -179,7 +195,15 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
                     splitMelody = isMelodyTrue,
                     listener = object : AudioSeparationEngine.ProgressListener {
                         override fun onProgress(progress: Float) {
-                            _processingState.value = ProcessingState.Processing(progress)
+                            val elapsed = System.currentTimeMillis() - startTime
+                            val est = if (progress > 0.02f) {
+                                val total = (elapsed / progress).toLong()
+                                val remaining = (total - elapsed) / 1000
+                                remaining.toInt().coerceAtLeast(1)
+                            } else {
+                                null
+                            }
+                            _processingState.value = ProcessingState.Processing(progress, est)
                         }
 
                         override fun onError(error: String) {
@@ -247,25 +271,20 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
         _durationMs.value = file.durationMs.toInt()
         _playbackProgress.value = 0f
         _currentPositionMs.value = 0
+        isCompareModeActive.value = false // reset compare mode on new track selection
 
         try {
             vocalPlayer = MediaPlayer().apply {
                 setDataSource(file.vocalPath)
-                val vol = vocalVolume.value
-                setVolume(vol, vol)
                 prepare()
             }
             instrumentalPlayer = MediaPlayer().apply {
                 setDataSource(file.instrumentalPath)
-                val vol = instrumentalVolume.value
-                setVolume(vol, vol)
                 prepare()
             }
             file.bassPath?.let { path ->
                 bassPlayer = MediaPlayer().apply {
                     setDataSource(path)
-                    val vol = bassVolume.value
-                    setVolume(vol, vol)
                     prepare()
                 }
             } ?: run { bassPlayer = null }
@@ -273,11 +292,11 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
             file.melodyPath?.let { path ->
                 melodyPlayer = MediaPlayer().apply {
                     setDataSource(path)
-                    val vol = melodyVolume.value
-                    setVolume(vol, vol)
                     prepare()
                 }
             } ?: run { melodyPlayer = null }
+
+            applyVolumes()
 
         } catch (e: Exception) {
             Log.e("VocalSeparatorViewModel", "Error creating media players", e)
@@ -491,7 +510,7 @@ class VocalSeparatorViewModel(application: Application) : AndroidViewModel(appli
 sealed interface ProcessingState {
     object Idle : ProcessingState
     object Copying : ProcessingState
-    data class Processing(val progress: Float) : ProcessingState
+    data class Processing(val progress: Float, val estRemainingSeconds: Int? = null) : ProcessingState
     data class Success(val file: ProcessedFile) : ProcessingState
     data class Error(val message: String) : ProcessingState
 }

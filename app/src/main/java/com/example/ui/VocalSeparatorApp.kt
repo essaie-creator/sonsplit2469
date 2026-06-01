@@ -75,6 +75,7 @@ fun VocalSeparatorApp(
     val instVol by viewModel.instrumentalVolume.collectAsStateWithLifecycle()
     val bassVol by viewModel.bassVolume.collectAsStateWithLifecycle()
     val melodyVol by viewModel.melodyVolume.collectAsStateWithLifecycle()
+    val isCompareActive by viewModel.isCompareModeActive.collectAsStateWithLifecycle()
 
     // Color palette definitions for a gorgeous premium Slate dark feel
     val darkSlateBg = Color(0xFF0F172A)
@@ -470,8 +471,28 @@ fun VocalSeparatorApp(
 
                                         Column(
                                             verticalArrangement = Arrangement.spacedBy(8.dp),
-                                            modifier = Modifier.padding(top = 4.dp)
+                                            modifier = Modifier.padding(top = 6.dp)
                                         ) {
+                                            if (state.estRemainingSeconds != null) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                    modifier = Modifier.padding(bottom = 6.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Timer,
+                                                        contentDescription = "Time remaining",
+                                                        tint = neonTeal.copy(alpha = 0.8f),
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                    Text(
+                                                        text = "Remaining: ${state.estRemainingSeconds}s",
+                                                        color = Color.White.copy(alpha = 0.6f),
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
+                                            }
                                             StepRow(
                                                 label = "Decode input audio tracks into raw samples",
                                                 isActive = state.progress > 0.0f,
@@ -671,6 +692,9 @@ fun VocalSeparatorApp(
                         onBassVolChange = { viewModel.bassVolume.value = it },
                         onMelodyVolChange = { viewModel.melodyVolume.value = it },
                         onClose = { viewModel.stopPlayback() },
+                        isCompareActive = isCompareActive,
+                        onToggleCompareMode = { viewModel.toggleCompareMode() },
+                        brightPurple = brightPurple,
                         darkSlateBg = darkSlateBg,
                         cardBg = cardBg,
                         neonTeal = neonTeal,
@@ -976,6 +1000,9 @@ fun MixerPlaybackPanel(
     onBassVolChange: (Float) -> Unit,
     onMelodyVolChange: (Float) -> Unit,
     onClose: () -> Unit,
+    isCompareActive: Boolean,
+    onToggleCompareMode: () -> Unit,
+    brightPurple: Color,
     darkSlateBg: Color,
     cardBg: Color,
     neonTeal: Color,
@@ -1024,6 +1051,75 @@ fun MixerPlaybackPanel(
                         contentDescription = "Close player",
                         tint = Color.White.copy(alpha = 0.6f)
                     )
+                }
+            }
+
+            // Compare Mode custom switcher inside Mixer Box
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(darkSlateBg)
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Button 1: Original Mixed (Before) - click toggles Compare Mode ON
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isCompareActive) neonTeal.copy(alpha = 0.15f) else Color.Transparent)
+                        .clickable { if (!isCompareActive) onToggleCompareMode() }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.VolumeUp,
+                            contentDescription = "Original Mixed",
+                            tint = if (isCompareActive) neonTeal else Color.White.copy(alpha = 0.4f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Original (Before)",
+                            color = if (isCompareActive) neonTeal else Color.White.copy(alpha = 0.6f),
+                            fontWeight = if (isCompareActive) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                // Button 2: Isolated Custom Mixer (After) - click toggles Compare Mode OFF
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (!isCompareActive) brightPurple.copy(alpha = 0.15f) else Color.Transparent)
+                        .clickable { if (isCompareActive) onToggleCompareMode() }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.GraphicEq,
+                            contentDescription = "Isolated Stems",
+                            tint = if (!isCompareActive) brightPurple else Color.White.copy(alpha = 0.4f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Split Mix (After)",
+                            color = if (!isCompareActive) brightPurple else Color.White.copy(alpha = 0.6f),
+                            fontWeight = if (!isCompareActive) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.sp
+                        )
+                    }
                 }
             }
 
@@ -1078,6 +1174,7 @@ fun MixerPlaybackPanel(
                         accentColor = neonTeal,
                         backgroundColor = darkSlateBg,
                         borderColor = lightBorder,
+                        enabled = !isCompareActive,
                         modifier = Modifier.weight(1f)
                     )
 
@@ -1090,6 +1187,7 @@ fun MixerPlaybackPanel(
                         accentColor = neonTeal,
                         backgroundColor = darkSlateBg,
                         borderColor = lightBorder,
+                        enabled = !isCompareActive,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -1108,6 +1206,7 @@ fun MixerPlaybackPanel(
                                 accentColor = neonTeal,
                                 backgroundColor = darkSlateBg,
                                 borderColor = lightBorder,
+                                enabled = !isCompareActive,
                                 modifier = Modifier.weight(1f)
                             )
                         } else {
@@ -1123,6 +1222,7 @@ fun MixerPlaybackPanel(
                                 accentColor = neonTeal,
                                 backgroundColor = darkSlateBg,
                                 borderColor = lightBorder,
+                                enabled = !isCompareActive,
                                 modifier = Modifier.weight(1f)
                             )
                         } else {
@@ -1165,12 +1265,14 @@ fun TrackSliderCard(
     accentColor: Color,
     backgroundColor: Color,
     borderColor: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
+    val alpha = if (enabled) 1.0f else 0.4f
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(backgroundColor)
+            .background(backgroundColor.copy(alpha = alpha))
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -1186,19 +1288,19 @@ fun TrackSliderCard(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = accentColor,
+                    tint = accentColor.copy(alpha = alpha),
                     modifier = Modifier.size(14.dp)
                 )
                 Text(
                     text = title,
-                    color = Color.White,
+                    color = Color.White.copy(alpha = alpha),
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp
                 )
             }
             Text(
                 text = "${(volume * 100).toInt()}%",
-                color = accentColor,
+                color = accentColor.copy(alpha = alpha),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -1206,9 +1308,10 @@ fun TrackSliderCard(
         Slider(
             value = volume,
             onValueChange = onVolumeChange,
+            enabled = enabled,
             colors = SliderDefaults.colors(
-                thumbColor = accentColor,
-                activeTrackColor = accentColor,
+                thumbColor = if (enabled) accentColor else Color.Gray,
+                activeTrackColor = if (enabled) accentColor else Color.DarkGray,
                 inactiveTrackColor = borderColor
             )
         )
